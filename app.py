@@ -5,6 +5,7 @@ from youtube_analytics.visualizer import YouTubeVisualizer
 from datetime import datetime
 import pandas as pd
 import time
+import plotly.graph_objects as go
 
 # Page configuration
 st.set_page_config(
@@ -300,6 +301,12 @@ def init_components():
 
 fetcher, db, visualizer = init_components()
 
+# Function to refresh database data in Streamlit
+def refresh_data():
+    """Force refresh of cached data"""
+    st.cache_data.clear()
+    st.rerun()
+
 # Hero Header
 st.markdown("""
 <div class='hero-header'>
@@ -309,7 +316,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Main Navigation Tabs
-tab1, tab2, tab3 = st.tabs(["🚀 Quick Fetch", "📊 Analytics Dashboard", "💾 Saved Channels"])
+tab1, tab2, tab3, tab4 = st.tabs(["🚀 Quick Fetch", "📊 Analytics Dashboard", "💾 Saved Channels", "🎬 Video Analytics"])
 
 # ============== TAB 1: QUICK FETCH ==============
 with tab1:
@@ -352,7 +359,7 @@ with tab1:
     
     fetch_option = st.radio(
         "Choose fetch method:",
-        ["📺 Channel ID", "👤 Username", "🔍 Search by Name"],
+        ["📺 Channel ID", "🎬 Video ID", "🔍 Search by Name"],
         horizontal=True
     )
     
@@ -379,6 +386,7 @@ with tab1:
                     if "error" not in channel_data:
                         # Auto-save channel
                         result = db.add_channel(channel_data)
+                        print(f"✅ DEBUG: Channel saved with result: {result}")
                         
                         # Display channel info
                         col1, col2 = st.columns([1, 3])
@@ -409,69 +417,63 @@ with tab1:
                                         progress_bar.progress((i + 1) / len(videos))
                                     
                                     st.success(f"✅ Saved {saved_count} videos to database!")
+                                    print(f"✅ DEBUG: Videos saved, rerunning app to refresh")
                                     time.sleep(1)
                                     st.rerun()
+                                else:
+                                    st.info("📌 No videos found to save, but channel was saved successfully!")
+                                    print(f"✅ DEBUG: No videos found, but channel saved - rerunning to refresh")
+                                    time.sleep(1)
+                                    st.rerun()
+                        else:
+                            # CRITICAL FIX: Rerun after channel save even if videos not fetched
+                            print(f"✅ DEBUG: Channel saved without videos - rerunning to refresh UI")
+                            time.sleep(1)
+                            st.rerun()
                     else:
                         st.error(f"❌ {channel_data['error']}")
             else:
                 st.warning("⚠️ Please enter a Channel ID")
     
-    # Username Fetch
-    elif fetch_option == "👤 Username":
+    # Video ID Fetch
+    elif fetch_option == "🎬 Video ID":
         col1, col2 = st.columns([3, 1])
         with col1:
-            username = st.text_input(
-                "Enter YouTube Username",
-                placeholder="GoogleDevelopers",
-                help="Enter the custom username"
+            video_id = st.text_input(
+                "Enter YouTube Video ID",
+                placeholder="dQw4w9WgXcQ",
+                help="Paste the video ID from YouTube URL (the part after 'v=')"
             )
         with col2:
             st.markdown("<br>", unsafe_allow_html=True)
-            fetch_videos = st.checkbox("Fetch Videos", value=True, key="user_vids")
+            fetch_videos = st.checkbox("Save Analysis", value=True, key="video_save")
         
-        if st.button("🚀 Fetch & Save by Username", type="primary"):
-            if username:
-                with st.spinner("🔄 Fetching channel data..."):
-                    channel_data = fetcher.get_channel_by_username(username)
+        if st.button("🎬 Fetch & Analyze Video", type="primary"):
+            if video_id:
+                with st.spinner("🔄 Fetching video data..."):
+                    video_data = fetcher.get_video_by_id(video_id)
                     
-                    if "error" not in channel_data:
-                        # Auto-save channel
-                        db.add_channel(channel_data)
-                        
-                        # Display channel info
+                    if "error" not in video_data:
+                        # Display video info
                         col1, col2 = st.columns([1, 3])
                         with col1:
-                            if channel_data.get('profile_image'):
-                                st.image(channel_data['profile_image'], width=120)
+                            if video_data.get('thumbnail'):
+                                st.image(video_data['thumbnail'], width=120)
                         with col2:
-                            st.markdown(f"### ✅ {channel_data['title']}")
-                            st.write(f"**Subscribers:** {format_number(channel_data['subscribers'])}")
-                            st.write(f"**Total Views:** {format_number(channel_data['total_views'])}")
+                            st.markdown(f"### ✅ {video_data['title']}")
+                            st.write(f"**Channel:** {video_data.get('channel_title', 'Unknown')}")
+                            st.write(f"**Views:** {format_number(video_data.get('views', 0))}")
                         
-                        st.success(f"✅ Channel saved to database!")
+                        st.success(f"✅ Video analyzed successfully!")
                         
-                        # Fetch videos if requested
+                        # Save to database if requested
                         if fetch_videos:
-                            with st.spinner("📹 Fetching videos..."):
-                                videos = fetcher.get_channel_videos(channel_data['channel_id'], max_results=50)
-                                
-                                if isinstance(videos, list) and len(videos) > 0:
-                                    progress_bar = st.progress(0)
-                                    saved_count = 0
-                                    
-                                    for i, video in enumerate(videos):
-                                        if "error" not in video:
-                                            db.add_video(video)
-                                            saved_count += 1
-                                        progress_bar.progress((i + 1) / len(videos))
-                                    
-                                    st.success(f"✅ Saved {saved_count} videos!")
-                                    time.sleep(1)
-                                    st.rerun()
+                            db.add_video(video_data)
+                            st.info("✅ Video saved to database!")
                     else:
-                        st.error(f"❌ {channel_data['error']}")
+                        st.error(f"❌ {video_data['error']}")
             else:
-                st.warning("⚠️ Please enter a username")
+                st.warning("⚠️ Please enter a video ID")
     
     # Search by Name
     else:
@@ -493,7 +495,8 @@ with tab1:
                     
                     if "error" not in channel_data:
                         # Auto-save channel
-                        db.add_channel(channel_data)
+                        result = db.add_channel(channel_data)
+                        print(f"✅ DEBUG: Channel saved with result: {result}")
                         
                         # Display channel info
                         col1, col2 = st.columns([1, 3])
@@ -523,8 +526,19 @@ with tab1:
                                         progress_bar.progress((i + 1) / len(videos))
                                     
                                     st.success(f"✅ Saved {saved_count} videos!")
+                                    print(f"✅ DEBUG: Videos saved, rerunning to refresh")
                                     time.sleep(1)
                                     st.rerun()
+                                else:
+                                    st.info("📌 No videos found to save, but channel was saved successfully!")
+                                    print(f"✅ DEBUG: No videos found, but channel saved - rerunning to refresh")
+                                    time.sleep(1)
+                                    st.rerun()
+                        else:
+                            # CRITICAL FIX: Rerun after channel save even if videos not fetched
+                            print(f"✅ DEBUG: Channel saved without videos - rerunning to refresh UI")
+                            time.sleep(1)
+                            st.rerun()
                     else:
                         st.error(f"❌ {channel_data['error']}")
             else:
@@ -535,29 +549,114 @@ with tab1:
     # Quick Tips
     st.info("💡 **Pro Tip:** Data is automatically saved to the database when you fetch. No extra clicks needed!")
 
-# ============== TAB 2: ANALYTICS DASHBOARD ==============
+# ============== TAB 2: ENHANCED ANALYTICS DASHBOARD ==============
 with tab2:
+    st.markdown("<div class='white-card'><h3 style='color: #1a1a1a;'>📊 Channel Analytics Dashboard</h3></div>", unsafe_allow_html=True)
+    
     channels = db.get_all_channels()
     
-    if not channels:
-        st.markdown("""
-        <div class='white-card' style='text-align: center; padding: 4rem;'>
-            <h2 style='color: #1a1a1a;'>📊 No Data Yet</h2>
-            <p style='font-size: 1.2rem; color: #666;'>Start by fetching a channel in the Quick Fetch tab</p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        # Channel Selector
+    # Initialize session state for persistent channel selection
+    if 'selected_channel_id' not in st.session_state:
+        st.session_state.selected_channel_id = None
+    if 'channel_data' not in st.session_state:
+        st.session_state.channel_data = None
+    
+    # Two options: Select from saved or search for new
+    analysis_mode = st.radio(
+        "Choose analysis method:",
+        ["📁 Saved Channels", "🔍 Search New Channel"],
+        horizontal=True
+    )
+    
+    selected_channel_id = st.session_state.selected_channel_id
+    channel_data = st.session_state.channel_data
+    
+    if analysis_mode == "📁 Saved Channels":
+        if not channels:
+            st.markdown("""
+            <div class='white-card' style='text-align: center; padding: 4rem;'>
+                <h2 style='color: #1a1a1a;'>📊 No Data Yet</h2>
+                <p style='font-size: 1.2rem; color: #666;'>Fetch a channel in the Quick Fetch tab to see analytics</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            # Channel Selector with hover effect
+            selected_channel = st.selectbox(
+                "Select Channel to Analyze",
+                options=[ch['title'] for ch in channels],
+                help="Hover to see all saved channels and click to select"
+            )
+            selected_channel_id = next(ch['channel_id'] for ch in channels if ch['title'] == selected_channel)
+            channel_data = db.get_channel(selected_channel_id)
+            # Persist in session state
+            st.session_state.selected_channel_id = selected_channel_id
+            st.session_state.channel_data = channel_data
+    
+    else:  # Search New Channel
         st.markdown("<div class='white-card'>", unsafe_allow_html=True)
-        selected_channel = st.selectbox(
-            "Select Channel to Analyze",
-            options=[ch['title'] for ch in channels]
-        )
+        search_type = st.radio("Search by:", ["Channel Name", "Channel ID"], horizontal=True)
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            if search_type == "Channel Name":
+                search_query = st.text_input(
+                    "Enter Channel Name",
+                    placeholder="e.g., Google Developers",
+                    help="Search for a channel by its name"
+                )
+            else:
+                search_query = st.text_input(
+                    "Enter Channel ID",
+                    placeholder="e.g., UCkRfArvrzheW7b6SVV7vA",
+                    help="Paste the channel ID from YouTube URL"
+                )
+        
+        with col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            search_btn = st.button("🔍 Search", type="primary")
+        
         st.markdown("</div>", unsafe_allow_html=True)
         
-        channel_id = next(ch['channel_id'] for ch in channels if ch['title'] == selected_channel)
-        channel_data = db.get_channel(channel_id)
-        stats = db.get_statistics(channel_id)
+        if search_btn and search_query:
+            with st.spinner("Fetching channel data..."):
+                try:
+                    if search_type == "Channel ID":
+                        channel_data = fetcher.get_channel_by_id(search_query)
+                    else:
+                        channel_data = fetcher.get_channel_by_name(search_query)
+                    
+                    if "error" not in channel_data:
+                        # Save to database
+                        db.add_channel(channel_data)
+                        selected_channel_id = channel_data['channel_id']
+                        # Persist in session state
+                        st.session_state.selected_channel_id = selected_channel_id
+                        st.session_state.channel_data = channel_data
+                        st.success("✅ Channel fetched and saved!")
+                        
+                        # Fetch and save videos
+                        with st.spinner("📹 Fetching videos..."):
+                            videos = fetcher.get_channel_videos(channel_data['channel_id'], max_results=50)
+                            
+                            if isinstance(videos, list) and len(videos) > 0:
+                                saved_count = 0
+                                for video in videos:
+                                    if "error" not in video:
+                                        db.add_video(video)
+                                        saved_count += 1
+                                st.info(f"✅ Fetched and saved {saved_count} videos")
+                                st.rerun()  # Refresh to show new data
+                            else:
+                                st.info("📌 No videos found for this channel")
+                    else:
+                        st.error(f"❌ {channel_data['error']}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+    
+    # Display Analytics if channel selected or searched
+    if channel_data and selected_channel_id:
+        stats = db.get_statistics(selected_channel_id)
         
         # Channel Header with detailed info
         st.markdown("<div class='white-card'>", unsafe_allow_html=True)
@@ -637,7 +736,7 @@ with tab2:
         st.markdown("### 📈 Performance Analytics")
         
         # Get detailed insights
-        insights = visualizer.get_content_insights(channel_id)
+        insights = visualizer.get_content_insights(selected_channel_id)
         
         if insights:
             # Display key insights
@@ -662,46 +761,49 @@ with tab2:
         
         st.markdown("<br>", unsafe_allow_html=True)
         
+        # Enhanced Visualizations with better graphs
+        st.markdown("### 📊 Detailed Charts & Analytics")
+        
         # Engagement Overview Chart
-        fig_engagement = visualizer.create_engagement_overview_chart(channel_id)
+        fig_engagement = visualizer.create_engagement_overview_chart(selected_channel_id)
         if fig_engagement:
             st.plotly_chart(fig_engagement, use_container_width=True)
         
         col1, col2 = st.columns(2)
         
         with col1:
-            fig1 = visualizer.create_video_performance_chart(channel_id)
+            fig1 = visualizer.create_video_performance_chart(selected_channel_id)
             if fig1:
                 st.plotly_chart(fig1, use_container_width=True)
             else:
                 st.info("No video data available")
         
         with col2:
-            fig2 = visualizer.create_engagement_ratio_chart(channel_id)
+            fig2 = visualizer.create_engagement_ratio_chart(selected_channel_id)
             if fig2:
                 st.plotly_chart(fig2, use_container_width=True)
             else:
                 st.info("No video data available")
         
         # Posting Frequency
-        fig_freq = visualizer.create_posting_frequency_chart(channel_id)
+        fig_freq = visualizer.create_posting_frequency_chart(selected_channel_id)
         if fig_freq:
             st.plotly_chart(fig_freq, use_container_width=True)
         
         # Performance Heatmap
-        fig_heatmap = visualizer.create_performance_heatmap(channel_id)
+        fig_heatmap = visualizer.create_performance_heatmap(selected_channel_id)
         if fig_heatmap:
             st.plotly_chart(fig_heatmap, use_container_width=True)
         
         # Views Distribution
-        fig3 = visualizer.create_views_distribution_chart(channel_id)
+        fig3 = visualizer.create_views_distribution_chart(selected_channel_id)
         if fig3:
             st.plotly_chart(fig3, use_container_width=True)
         
         st.markdown("</div>", unsafe_allow_html=True)
         
         # Video List with enhanced analytics
-        videos = db.get_channel_videos(channel_id)
+        videos = db.get_channel_videos(selected_channel_id)
         if videos:
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown("<div class='white-card'>", unsafe_allow_html=True)
@@ -721,7 +823,9 @@ with tab2:
             videos_df['likes_formatted'] = videos_df['likes'].apply(lambda x: f"{int(x):,}")
             videos_df['comments_formatted'] = videos_df['comments'].apply(lambda x: f"{int(x):,}")
             
-            display_df = videos_df[['title', 'views_formatted', 'likes_formatted', 'comments_formatted', 'engagement_rate', 'like_rate', 'published_at']].sort_values('views', ascending=False)
+            # Sort by views first, then select columns to display
+            videos_df_sorted = videos_df.sort_values('views', ascending=False)
+            display_df = videos_df_sorted[['title', 'views_formatted', 'likes_formatted', 'comments_formatted', 'engagement_rate', 'like_rate', 'published_at']].copy()
             display_df.columns = ['Title', 'Views', 'Likes', 'Comments', 'Engagement %', 'Like %', 'Published']
             
             st.dataframe(display_df, use_container_width=True, height=400)
@@ -776,6 +880,122 @@ with tab3:
                         st.rerun()
             
             st.markdown("</div>", unsafe_allow_html=True)
+
+# ============== TAB 4: VIDEO ANALYTICS ==============
+with tab4:
+    st.markdown("<div class='white-card'><h3 style='color: #1a1a1a;'>🎬 Single Video Analytics</h3></div>", unsafe_allow_html=True)
+    st.write("Get detailed analytics for any YouTube video by video ID")
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        video_id = st.text_input(
+            "Enter YouTube Video ID",
+            placeholder="e.g., dQw4w9WgXcQ",
+            help="Paste the video ID from YouTube URL (the part after 'v=')"
+        )
+    
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        analyze_btn = st.button("🔍 Analyze Video", type="primary")
+    
+    if analyze_btn:
+        if video_id:
+            with st.spinner("Fetching video data..."):
+                try:
+                    # Fetch video data
+                    video_data = fetcher.get_video_by_id(video_id)
+                    
+                    if "error" not in video_data:
+                        # Save to database (if channel also saved)
+                        channel_id = video_data.get('channel_id')
+                        if channel_id:
+                            db.add_video(video_data)
+                        
+                        # Display video details
+                        st.markdown("<div class='white-card'>", unsafe_allow_html=True)
+                        col1, col2 = st.columns([1, 3])
+                        
+                        with col1:
+                            if video_data.get('thumbnail'):
+                                st.image(video_data['thumbnail'], width=150)
+                        
+                        with col2:
+                            st.markdown(f"### {video_data['title']}", unsafe_allow_html=True)
+                            st.write(f"**Channel:** {video_data.get('channel_title', 'Unknown')}")
+                            st.write(f"**Video ID:** `{video_data['video_id']}`")
+                            st.write(f"**Description:** {video_data.get('description', 'N/A')[:300]}...")
+                        
+                        st.markdown("</div>", unsafe_allow_html=True)
+                        
+                        # Video metrics
+                        st.markdown("<div class='white-card'><h4 style='color: #1a1a1a;'>📊 Video Performance Metrics</h4></div>", unsafe_allow_html=True)
+                        
+                        metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+                        
+                        with metric_col1:
+                            views = int(video_data.get('views', 0)) if video_data.get('views', 0) != 'Private' else 0
+                            st.metric("Views", format_number(views))
+                        
+                        with metric_col2:
+                            likes = int(video_data.get('likes', 0)) if video_data.get('likes', 0) != 'Private' else 0
+                            st.metric("Likes", format_number(likes))
+                        
+                        with metric_col3:
+                            comments = int(video_data.get('comments', 0)) if video_data.get('comments', 0) != 'Private' else 0
+                            st.metric("Comments", format_number(comments))
+                        
+                        with metric_col4:
+                            try:
+                                views_int = int(video_data.get('views', 1)) if video_data.get('views', 1) != 'Private' else 1
+                                likes_int = int(video_data.get('likes', 0)) if video_data.get('likes', 0) != 'Private' else 0
+                                engagement = (likes_int / views_int * 100) if views_int > 0 else 0
+                                st.metric("Engagement %", f"{engagement:.2f}%")
+                            except:
+                                st.metric("Engagement %", "N/A")
+                        
+                        with metric_col5:
+                            st.metric("Published", video_data.get('published_at', 'N/A')[:10] if video_data.get('published_at') else 'N/A')
+                        
+                        # Additional details
+                        st.markdown("<div class='white-card'><h4 style='color: #1a1a1a;'>ℹ️ Video Details</h4></div>", unsafe_allow_html=True)
+                        
+                        detail_col1, detail_col2 = st.columns(2)
+                        
+                        with detail_col1:
+                            st.write(f"**Duration:** {video_data.get('duration', 'N/A')}")
+                            st.write(f"**Published At:** {video_data.get('published_at', 'N/A')}")
+                        
+                        with detail_col2:
+                            st.write(f"**Video ID:** `{video_data['video_id']}`")
+                            st.write(f"**Channel ID:** `{video_data.get('channel_id', 'N/A')}`")
+                        
+                        # Engagement chart
+                        if video_data.get('views') and video_data.get('likes'):
+                            try:
+                                views = int(video_data.get('views', 0)) if video_data.get('views', 0) != 'Private' else 0
+                                likes = int(video_data.get('likes', 0)) if video_data.get('likes', 0) != 'Private' else 0
+                                comments = int(video_data.get('comments', 0)) if video_data.get('comments', 0) != 'Private' else 0
+                                
+                                if views > 0:
+                                    fig = go.Figure(data=[go.Pie(
+                                        labels=['Views', 'Likes', 'Comments'],
+                                        values=[views, likes, comments],
+                                        marker=dict(colors=['#667eea', '#764ba2', '#f093fb'])
+                                    )])
+                                    fig.update_layout(title='Engagement Distribution', height=400)
+                                    st.plotly_chart(fig, use_container_width=True)
+                            except:
+                                pass
+                        
+                        st.success("✅ Video analyzed successfully!")
+                    else:
+                        st.error(f"❌ {video_data['error']}")
+                except Exception as e:
+                    st.error(f"❌ Error analyzing video: {str(e)}")
+                    print(f"Video Analytics Error: {e}")
+        else:
+            st.warning("⚠️ Please enter a video ID")
 
 # Footer
 st.markdown("<br><br>", unsafe_allow_html=True)

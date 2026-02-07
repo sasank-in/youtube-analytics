@@ -9,8 +9,27 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from youtube_analytics.config import DB_URL
 from datetime import datetime
+from dateutil import parser as date_parser
 
 Base = declarative_base()
+
+def parse_datetime(date_input):
+    """Convert ISO format string to Python datetime object"""
+    if date_input is None:
+        return None
+    if isinstance(date_input, datetime):
+        return date_input
+    if isinstance(date_input, str):
+        try:
+            # Parse ISO format string (e.g., '2020-09-15T00:29:10Z')
+            return date_parser.isoparse(date_input)
+        except:
+            try:
+                # Fallback to basic parsing
+                return datetime.fromisoformat(date_input.replace('Z', '+00:00'))
+            except:
+                return None
+    return None
 
 
 class Channel(Base):
@@ -59,6 +78,7 @@ class Video(Base):
     likes = Column(String(50))
     comments = Column(String(50))
     thumbnail = Column(String(500))
+    channel_title = Column(String(255))  # Added to track source channel
     fetched_at = Column(DateTime, default=datetime.utcnow)
     
     channel = relationship("Channel", back_populates="videos")
@@ -69,11 +89,13 @@ class Video(Base):
             "channel_id": self.channel_id,
             "title": self.title,
             "description": self.description,
+            "channel_title": self.channel_title,
             "published_at": self.published_at,
             "duration": self.duration,
             "views": self.views,
             "likes": self.likes,
             "comments": self.comments,
+            "thumbnail": self.thumbnail,
             "fetched_at": self.fetched_at
         }
 
@@ -82,48 +104,100 @@ class DatabaseManager:
     """Manages database operations for channels and videos"""
     
     def __init__(self):
-        self.engine = create_engine(DB_URL)
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind=self.engine)
+        """Initialize database connection with proper error handling"""
+        try:
+            from youtube_analytics.config import DB_ECHO, DB_URL as config_db_url
+            
+            print(f"🗄️ Initializing database...")
+            print(f"   URL: {config_db_url}")
+            
+            self.engine = create_engine(config_db_url, echo=DB_ECHO)
+            
+            # Test connection
+            print(f"   Testing connection...")
+            with self.engine.connect() as conn:
+                pass
+            print(f"   ✅ Connection successful")
+            
+            # Create tables
+            print(f"   Creating tables...")
+            Base.metadata.create_all(self.engine)
+            print(f"   ✅ Tables ready")
+            
+            self.Session = sessionmaker(bind=self.engine)
+            print(f"✅ Database initialized successfully\n")
+        except Exception as e:
+            print(f"\n❌ DATABASE INITIALIZATION FAILED")
+            print(f"   Error: {str(e)}")
+            print(f"   URL: {config_db_url}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def add_channel(self, channel_data):
-        """Add or update channel data"""
+        """Add or update channel data with datetime conversion"""
         session = self.Session()
         try:
+            # Filter channel_data to only include columns that exist in Channel model
+            valid_fields = {col.name for col in Channel.__table__.columns}
+            filtered_data = {k: v for k, v in channel_data.items() if k in valid_fields}
+            
+            # Convert datetime strings to Python datetime objects
+            if 'published_at' in filtered_data and filtered_data['published_at']:
+                filtered_data['published_at'] = parse_datetime(filtered_data['published_at'])
+            
             channel = session.query(Channel).filter_by(channel_id=channel_data["channel_id"]).first()
             
             if channel:
-                for key, value in channel_data.items():
+                # Update existing channel
+                for key, value in filtered_data.items():
                     setattr(channel, key, value)
             else:
-                channel = Channel(**channel_data)
+                # Create new channel with only valid columns
+                channel = Channel(**filtered_data)
                 session.add(channel)
             
             session.commit()
+            session.refresh(channel)  # Refresh to get the updated timestamp
+            print(f"✅ Channel saved: {channel_data['title']}")
             return {"success": True, "message": f"Channel '{channel_data['title']}' saved/updated"}
         except Exception as e:
             session.rollback()
+            print(f"❌ Channel save error: {str(e)} | Data keys: {list(channel_data.keys())}")
             return {"success": False, "error": str(e)}
         finally:
             session.close()
     
     def add_video(self, video_data):
-        """Add or update video data"""
+        """Add or update video data with datetime conversion"""
         session = self.Session()
         try:
+            # Filter video_data to only include columns that exist in Video model
+            valid_fields = {col.name for col in Video.__table__.columns}
+            
+            filtered_data = {k: v for k, v in video_data.items() if k in valid_fields}
+            
+            # Convert datetime strings to Python datetime objects
+            if 'published_at' in filtered_data and filtered_data['published_at']:
+                filtered_data['published_at'] = parse_datetime(filtered_data['published_at'])
+            
             video = session.query(Video).filter_by(video_id=video_data["video_id"]).first()
             
             if video:
-                for key, value in video_data.items():
+                # Update existing video
+                for key, value in filtered_data.items():
                     setattr(video, key, value)
             else:
-                video = Video(**video_data)
+                # Create new video with only valid columns
+                video = Video(**filtered_data)
                 session.add(video)
             
             session.commit()
+            session.refresh(video)  # Refresh to get the updated timestamp
             return {"success": True, "message": f"Video '{video_data['title']}' saved/updated"}
         except Exception as e:
             session.rollback()
+            print(f"📹 Video save error: {str(e)} | Data: {video_data}")
             return {"success": False, "error": str(e)}
         finally:
             session.close()
@@ -138,11 +212,21 @@ class DatabaseManager:
             session.close()
     
     def get_all_channels(self):
-        """Get all channels"""
+        """Get all channels from database"""
         session = self.Session()
         try:
             channels = session.query(Channel).all()
-            return [channel.to_dict() for channel in channels]
+            result = [channel.to_dict() for channel in channels]
+            if result:
+                print(f"📊 Retrieved {len(result)} channel(s) from database")
+            else:
+                print(f"⚠️ No channels found in database")
+            return result
+        except Exception as e:
+            print(f"❌ Error fetching channels: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
         finally:
             session.close()
     
@@ -151,7 +235,17 @@ class DatabaseManager:
         session = self.Session()
         try:
             videos = session.query(Video).filter_by(channel_id=channel_id).all()
-            return [video.to_dict() for video in videos]
+            result = [video.to_dict() for video in videos]
+            if result:
+                print(f"🎬 Retrieved {len(result)} video(s) for channel {channel_id}")
+            else:
+                print(f"⚠️ No videos found for channel: {channel_id}")
+            return result
+        except Exception as e:
+            print(f"❌ Error fetching videos: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
         finally:
             session.close()
     

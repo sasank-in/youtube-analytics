@@ -62,23 +62,32 @@ class YouTubeFetcher:
                 )
                 playlist_response = playlist_request.execute()
                 
+                # Check if there are items in the response
+                if not playlist_response.get('items'):
+                    break  # No more videos
+                
                 video_ids = [item['snippet']['resourceId']['videoId'] for item in playlist_response['items']]
                 
-                # Get video statistics
-                videos_request = self.youtube.videos().list(
-                    part="snippet,statistics,contentDetails",
-                    id=','.join(video_ids)
-                )
-                videos_response = videos_request.execute()
-                
-                for video in videos_response['items']:
-                    videos.append(self._parse_video_response({'items': [video]}))
+                # Only fetch if we have video IDs
+                if video_ids:
+                    # Get video statistics
+                    videos_request = self.youtube.videos().list(
+                        part="snippet,statistics,contentDetails",
+                        id=','.join(video_ids)
+                    )
+                    videos_response = videos_request.execute()
+                    
+                    for video in videos_response.get('items', []):
+                        parsed = self._parse_video_response({'items': [video]})
+                        if "error" not in parsed:
+                            videos.append(parsed)
                 
                 next_page_token = playlist_response.get('nextPageToken')
                 if not next_page_token:
                     break
             
-            return videos
+            # Return empty list if no videos, not error
+            return videos if videos else []
         except Exception as e:
             return {"error": str(e)}
     
