@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Analytics Pro</title>
+    <link rel="icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/styles.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
 </head>
@@ -394,7 +395,7 @@
                         </div>
                     </div>
                     <div class="card">
-                        <h3>Performance Percentile</h3>
+                        <h3>Engagement Efficiency</h3>
                         <div class="chart-container">
                             <canvas id="video-percentile-canvas"></canvas>
                         </div>
@@ -409,21 +410,14 @@
                         </div>
                     </div>
                     <div class="card">
-                        <h3>Velocity Proxy</h3>
+                        <h3>Velocity Trend (Views vs Likes)</h3>
+                        <div class="form-group" style="max-width: 260px; margin-bottom: 0.75rem;">
+                            <label for="video-rpm-input">RPM (USD per 1,000 views)</label>
+                            <input type="number" id="video-rpm-input" class="input-field" min="0" step="0.1" value="2.0">
+                        </div>
                         <div class="chart-container">
                             <canvas id="video-velocity-canvas"></canvas>
                         </div>
-                    </div>
-                </div>
-
-                <div class="card" style="margin-top: 2rem; display: none;" id="video-earnings-section">
-                    <h3>Estimated Earnings (RPM-based)</h3>
-                    <div class="form-group" style="max-width: 260px;">
-                        <label for="video-rpm-input">RPM (USD per 1,000 views)</label>
-                        <input type="number" id="video-rpm-input" class="input-field" min="0" step="0.1" value="2.0">
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="video-earnings-canvas"></canvas>
                     </div>
                 </div>
             </section>
@@ -445,6 +439,8 @@
     <div id="toast-container" class="toast-container"></div>
 </div>
 
+<script src="/static/js/channel-charts.js"></script>
+<script src="/static/js/video-charts.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

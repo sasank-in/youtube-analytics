@@ -4,7 +4,7 @@ Professional and production-ready FastAPI backend for YouTube analytics.
 Provides RESTful API endpoints for YouTube data management.
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -81,6 +81,15 @@ class ChannelResponse(BaseModel):
 async def root():
     """Serve main HTML page"""
     return FileResponse(TEMPLATES_DIR / "index.html", media_type="text/html")
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Serve favicon to avoid 404 noise in browser console."""
+    icon_path = STATIC_DIR / "favicon.ico"
+    if icon_path.exists():
+        return FileResponse(icon_path)
+    return Response(status_code=204)
 
 
 @app.get("/api/health")

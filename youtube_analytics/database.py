@@ -175,7 +175,6 @@ class DatabaseManager:
             if 'published_at' in filtered_data and filtered_data['published_at']:
                 filtered_data['published_at'] = parse_datetime(filtered_data['published_at'])
             filtered_data['last_searched_at'] = datetime.utcnow()
-            filtered_data['last_searched_at'] = datetime.utcnow()
             
             channel = session.query(Channel).filter_by(channel_id=channel_data["channel_id"]).first()
             
@@ -211,6 +210,7 @@ class DatabaseManager:
             # Convert datetime strings to Python datetime objects
             if 'published_at' in filtered_data and filtered_data['published_at']:
                 filtered_data['published_at'] = parse_datetime(filtered_data['published_at'])
+            filtered_data['last_searched_at'] = datetime.utcnow()
             
             video = session.query(Video).filter_by(video_id=video_data["video_id"]).first()
             
