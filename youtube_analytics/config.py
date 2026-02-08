@@ -32,5 +32,8 @@ else:
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# Analytics Settings
+TOP_VIDEOS_LIMIT = int(os.getenv("TOP_VIDEOS_LIMIT", "50"))
+
 # Database Debug Mode
 DB_ECHO = os.getenv("DB_ECHO", "False").lower() == "true"  # Logs SQL queries if True

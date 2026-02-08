@@ -666,8 +666,9 @@ async function selectChannel(channelId) {
     }
 }
 
-async function loadChannelVideos(channelId) {
+async function loadChannelVideos(channelId, options = {}) {
     try {
+        const { allowAutoFetch = true } = options;
         const response = await fetchAPI(`/channel/${channelId}/videos`);
         const videos = response.videos || [];
         
@@ -678,7 +679,18 @@ async function loadChannelVideos(channelId) {
         
         if (videos.length === 0) {
             scroller.innerHTML = '<p class="placeholder">No videos found. Click "Fetch Videos" to load data.</p>';
-            return;
+            if (!allowAutoFetch) return;
+
+            showLoading(true, 'Fetching top videos...');
+            try {
+                await fetchAPI(`/channel/${channelId}/videos/fetch?sync=true`, { method: 'POST' });
+                return await loadChannelVideos(channelId, { allowAutoFetch: false });
+            } catch (error) {
+                showToast(`Error fetching videos: ${error.message}`, 'error');
+                return;
+            } finally {
+                showLoading(false);
+            }
         }
 
         scroller.innerHTML = videos.map(video => `
@@ -740,14 +752,13 @@ async function handleFetchVideos() {
     showLoading(true, 'Fetching videos...');
 
     try {
-        await fetchAPI(`/channel/${currentChannelId}/videos/fetch`, {
+        const result = await fetchAPI(`/channel/${currentChannelId}/videos/fetch?sync=true`, {
             method: 'POST'
         });
 
-        showToast('Videos fetching in background', 'success');
-        
-        // Reload videos after delay
-        setTimeout(() => loadChannelVideos(currentChannelId), 2000);
+        const saved = result && typeof result.saved === 'number' ? result.saved : null;
+        showToast(saved !== null ? `Fetched ${saved} videos` : 'Videos fetched', 'success');
+        await loadChannelVideos(currentChannelId, { allowAutoFetch: false });
     } catch (error) {
         showToast(`Error: ${error.message}`, 'error');
     } finally {
@@ -1660,12 +1671,14 @@ function drawTopVideosChart(canvas, videos) {
 
     const topVideos = videos.map(v => ({
         title: (v.title || 'Video').substring(0, 20),
-        views: toNumber(v.views)
+        views: toNumber(v.views),
+        likes: toNumber(v.likes)
     })).sort((a, b) => b.views - a.views).slice(0, 8);
 
     const ctx = canvas.getContext('2d');
     
     const avgViews = topVideos.reduce((s, v) => s + v.views, 0) / (topVideos.length || 1);
+    const avgLikes = topVideos.reduce((s, v) => s + v.likes, 0) / (topVideos.length || 1);
 
     topVideosChartInstance = new Chart(ctx, {
         type: 'bar',
@@ -1682,7 +1695,18 @@ function drawTopVideosChart(canvas, videos) {
                 hoverBackgroundColor: CHART_THEME.brandGreen,
                 hoverBorderWidth: 2.5
             }, {
-                label: 'Average',
+                label: 'Likes',
+                data: topVideos.map(v => v.likes),
+                backgroundColor: CHART_THEME.brandBlueLight,
+                borderColor: CHART_THEME.brandBlue,
+                borderWidth: 2,
+                borderRadius: 10,
+                borderSkipped: false,
+                hoverBackgroundColor: CHART_THEME.brandBlue,
+                hoverBorderWidth: 2.5,
+                yAxisID: 'y1'
+            }, {
+                label: 'Average Views',
                 data: topVideos.map(() => avgViews),
                 type: 'line',
                 borderColor: 'rgba(120, 130, 140, 0.9)',
@@ -1690,14 +1714,24 @@ function drawTopVideosChart(canvas, videos) {
                 borderWidth: 2,
                 pointRadius: 0,
                 fill: false
+            }, {
+                label: 'Average Likes',
+                data: topVideos.map(() => avgLikes),
+                type: 'line',
+                borderColor: 'rgba(25, 90, 160, 0.9)',
+                borderDash: [6, 4],
+                borderWidth: 2,
+                pointRadius: 0,
+                fill: false,
+                yAxisID: 'y1'
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                title: { display: true, text: 'Top Videos by Views', color: CHART_THEME.text, font: { size: 15, weight: '600' }, padding: { bottom: 10 } },
-                subtitle: { display: true, text: `Benchmark: Average views • Sample size: ${topVideos.length}`, color: CHART_THEME.textMuted, font: { size: 11, weight: '500' }, padding: { bottom: 8 } },
+                title: { display: true, text: 'Top Videos: Views vs Likes', color: CHART_THEME.text, font: { size: 15, weight: '600' }, padding: { bottom: 10 } },
+                subtitle: { display: true, text: `Benchmark: Average views & likes • Sample size: ${topVideos.length}`, color: CHART_THEME.textMuted, font: { size: 11, weight: '500' }, padding: { bottom: 8 } },
                 legend: { position: 'bottom', labels: { color: CHART_THEME.textMuted, font: { size: 11, weight: '600' } } },
                 tooltip: {
                     enabled: true,
@@ -1708,7 +1742,7 @@ function drawTopVideosChart(canvas, videos) {
                     borderColor: CHART_THEME.border,
                     borderWidth: 1,
                     callbacks: {
-                        label: (c) => formatNumber(c.parsed.y) + ' views',
+                        label: (c) => `${c.dataset.label}: ${formatNumber(c.parsed.y)}`,
                         afterLabel: (c) => {
                             const t = topVideos.reduce((s, v) => s + v.views, 0);
                             return t > 0 ? ((c.parsed.y / t) * 100).toFixed(1) + '% of total views' : '';
@@ -1720,6 +1754,12 @@ function drawTopVideosChart(canvas, videos) {
                 y: {
                     beginAtZero: true,
                     grid: { color: CHART_THEME.grid, drawBorder: true, borderColor: CHART_THEME.border },
+                    ticks: { color: CHART_THEME.textMuted, font: { size: 12, weight: '500' }, callback: (v) => formatNumber(v), padding: 10 }
+                },
+                y1: {
+                    beginAtZero: true,
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
                     ticks: { color: CHART_THEME.textMuted, font: { size: 12, weight: '500' }, callback: (v) => formatNumber(v), padding: 10 }
                 },
                 x: {
@@ -2073,40 +2113,69 @@ function drawOutliersChart(canvas, videos) {
     const threshold = viewsList[Math.min(idx, viewsList.length - 1)];
 
     let outliers = videos
-        .map(v => ({ title: (v.title || 'Video').substring(0, 20), views: toNumber(v.views) }))
+        .map(v => {
+            const views = toNumber(v.views);
+            const likes = toNumber(v.likes);
+            const comments = toNumber(v.comments);
+            const engagement = views > 0 ? ((likes + comments) / views) * 100 : 0;
+            return {
+                title: (v.title || 'Video').substring(0, 20),
+                views,
+                likes,
+                comments,
+                engagement
+            };
+        })
         .filter(v => v.views >= threshold)
         .sort((a, b) => b.views - a.views)
-        .slice(0, 8);
+        .slice(0, 12);
 
     if (outliers.length === 0) {
         outliers = videos
-            .map(v => ({ title: (v.title || 'Video').substring(0, 20), views: toNumber(v.views) }))
+            .map(v => {
+                const views = toNumber(v.views);
+                const likes = toNumber(v.likes);
+                const comments = toNumber(v.comments);
+                const engagement = views > 0 ? ((likes + comments) / views) * 100 : 0;
+                return {
+                    title: (v.title || 'Video').substring(0, 20),
+                    views,
+                    likes,
+                    comments,
+                    engagement
+                };
+            })
             .sort((a, b) => b.views - a.views)
-            .slice(0, 3);
+            .slice(0, 6);
     }
 
     const ctx = canvas.getContext('2d');
     outliersChartInstance = new Chart(ctx, {
-        type: 'bar',
+        type: 'bubble',
         data: {
-            labels: outliers.map(v => v.title),
             datasets: [{
-                label: 'Views',
-                data: outliers.map(v => v.views),
+                label: 'Outliers',
+                data: outliers.map(v => ({
+                    x: Math.max(v.views, 1),
+                    y: v.engagement,
+                    r: Math.max(6, Math.sqrt(v.comments || 0)),
+                    title: v.title,
+                    views: v.views,
+                    likes: v.likes,
+                    comments: v.comments
+                })),
                 backgroundColor: CHART_THEME.brandGoldLight,
                 borderColor: CHART_THEME.brandGold,
                 borderWidth: 2,
-                borderRadius: 10,
-                borderSkipped: false,
-                hoverBackgroundColor: CHART_THEME.brandGold,
-                hoverBorderWidth: 2.5
+                hoverBackgroundColor: CHART_THEME.brandGold
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                title: { display: true, text: 'Top 5% View Outliers', color: CHART_THEME.text, font: { size: 15, weight: '600' }, padding: { bottom: 10 } },
+                title: { display: true, text: 'Outlier Matrix (Views × Engagement)', color: CHART_THEME.text, font: { size: 15, weight: '600' }, padding: { bottom: 10 } },
+                subtitle: { display: true, text: 'Bubble size = comments • X axis = views (log) • Y axis = engagement rate', color: CHART_THEME.textMuted, font: { size: 11, weight: '500' }, padding: { bottom: 8 } },
                 legend: { display: false },
                 tooltip: {
                     enabled: true,
@@ -2116,18 +2185,32 @@ function drawOutliersChart(canvas, videos) {
                     bodyFont: { size: 12, weight: '500' },
                     borderColor: CHART_THEME.border,
                     borderWidth: 1,
-                    callbacks: { label: (c) => formatNumber(c.parsed.y) + ' views' }
+                    callbacks: {
+                        title: (items) => items[0].raw.title || 'Video',
+                        label: (item) => {
+                            const d = item.raw;
+                            return [
+                                `Views: ${formatNumber(d.views)}`,
+                                `Engagement: ${d.y.toFixed(2)}%`,
+                                `Likes: ${formatNumber(d.likes)}`,
+                                `Comments: ${formatNumber(d.comments)}`
+                            ];
+                        }
+                    }
                 }
             },
             scales: {
+                x: {
+                    type: 'logarithmic',
+                    grid: { color: CHART_THEME.grid, drawBorder: true, borderColor: CHART_THEME.border },
+                    ticks: { color: CHART_THEME.textMuted, font: { size: 12, weight: '500' }, callback: (v) => formatNumber(v), padding: 10 },
+                    title: { display: true, text: 'Views (log scale)', color: CHART_THEME.textMuted, font: { size: 11, weight: '600' } }
+                },
                 y: {
                     beginAtZero: true,
                     grid: { color: CHART_THEME.grid, drawBorder: true, borderColor: CHART_THEME.border },
-                    ticks: { color: CHART_THEME.textMuted, font: { size: 12, weight: '500' }, callback: (v) => formatNumber(v), padding: 10 }
-                },
-                x: {
-                    grid: { display: false, drawBorder: false },
-                    ticks: { color: CHART_THEME.text, font: { size: 12, weight: '600' }, padding: 10 }
+                    ticks: { color: CHART_THEME.textMuted, font: { size: 12, weight: '500' }, callback: (v) => v + '%', padding: 10 },
+                    title: { display: true, text: 'Engagement Rate (%)', color: CHART_THEME.textMuted, font: { size: 11, weight: '600' } }
                 }
             }
         }

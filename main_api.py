@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from youtube_analytics.fetcher import YouTubeFetcher
 from youtube_analytics.database import DatabaseManager
+from youtube_analytics.config import TOP_VIDEOS_LIMIT
 from youtube_analytics.visualizer import YouTubeVisualizer
 from pydantic import BaseModel
 from typing import List, Optional
@@ -104,6 +105,11 @@ async def search_channel(search: ChannelSearch, background_tasks: BackgroundTask
         if "error" in channel_data:
             raise HTTPException(status_code=404, detail=channel_data["error"])
         
+        # If channel exists, wipe old data first
+        existing = db.get_channel(channel_data["channel_id"])
+        if existing:
+            db.delete_channel(channel_data["channel_id"])
+
         # Save channel to database
         db.add_channel(channel_data)
         
@@ -165,9 +171,26 @@ async def get_channel_details(channel_id: str):
 
 
 @app.post("/api/channel/{channel_id}/videos/fetch")
-async def fetch_channel_videos_endpoint(channel_id: str, background_tasks: BackgroundTasks):
+async def fetch_channel_videos_endpoint(
+    channel_id: str,
+    background_tasks: BackgroundTasks,
+    sync: bool = False,
+    debug: bool = False
+):
     """Fetch and save videos for a channel"""
     try:
+        if sync:
+            result = fetch_channel_videos(channel_id, debug=debug)
+            if result.get("error"):
+                raise HTTPException(status_code=502, detail=result["error"])
+            response = {
+                "message": "Fetch complete",
+                "channel_id": channel_id,
+                "saved": result.get("saved", 0)
+            }
+            if debug:
+                response["debug"] = result.get("debug")
+            return response
         background_tasks.add_task(fetch_channel_videos, channel_id)
         return {"message": "Fetching videos in background", "channel_id": channel_id}
     except HTTPException:
@@ -177,16 +200,24 @@ async def fetch_channel_videos_endpoint(channel_id: str, background_tasks: Backg
 
 
 @app.get("/api/channel/{channel_id}/videos")
-async def get_channel_videos(channel_id: str, limit: int = 50):
+async def get_channel_videos(channel_id: str, limit: int = 50, include_charts: bool = False):
     """Get videos for a channel"""
     try:
         all_videos = db.get_channel_videos(channel_id)
-        videos = all_videos[:limit] if limit else all_videos
+        if limit:
+            def _views_int(v):
+                try:
+                    return int(v.get("views") or 0)
+                except Exception:
+                    return 0
+            videos = sorted(all_videos, key=_views_int, reverse=True)[:limit]
+        else:
+            videos = all_videos
         stats = db.get_statistics(channel_id)
         
-        # Generate charts
+        # Generate charts only when requested (frontend uses client-side charts)
         charts = {}
-        if videos:
+        if include_charts and videos:
             charts = generate_visualizations(channel_id, videos)
         
         return {
@@ -325,16 +356,39 @@ async def delete_video(video_id: str):
 
 # ==================== Background Tasks ====================
 
-def fetch_channel_videos(channel_id: str):
-    """Background task to fetch and save channel videos"""
+def fetch_channel_videos(channel_id: str, debug: bool = False):
+    """Fetch and save top channel videos only. Returns summary for sync calls."""
     try:
-        videos = fetcher.get_channel_videos(channel_id, max_results=50)
-        if isinstance(videos, list):
-            for video in videos:
-                if "error" not in video:
-                    db.add_video(video)
+        fetch_result = fetcher.get_channel_top_videos(
+            channel_id,
+            max_results=TOP_VIDEOS_LIMIT,
+            return_debug=debug
+        )
+
+        if isinstance(fetch_result, dict) and fetch_result.get("error"):
+            print(f"Error fetching videos for channel {channel_id}: {fetch_result['error']}")
+            return {"error": fetch_result["error"], "saved": 0, "debug": fetch_result.get("debug")}
+
+        videos = fetch_result["videos"] if debug and isinstance(fetch_result, dict) else fetch_result
+
+        if not videos:
+            print(f"No videos returned from API for channel: {channel_id}")
+            return {"saved": 0, "debug": fetch_result.get("debug") if debug and isinstance(fetch_result, dict) else None}
+
+        # Wipe existing videos for this channel before saving new top list
+        db.delete_channel_videos(channel_id)
+
+        saved = 0
+        for video in videos:
+            if "error" not in video:
+                result = db.add_video(video)
+                if result.get("success"):
+                    saved += 1
+        print(f"Fetched {len(videos)} videos for channel {channel_id}, saved {saved}")
+        return {"saved": saved, "debug": fetch_result.get("debug") if debug and isinstance(fetch_result, dict) else None}
     except Exception as e:
         print(f"Error fetching videos: {e}")
+        return {"error": str(e), "saved": 0}
 
 
 def generate_visualizations(channel_id: str, videos: List[dict]) -> dict:

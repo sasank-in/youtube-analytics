@@ -305,6 +305,19 @@ class DatabaseManager:
         finally:
             session.close()
 
+    def delete_channel_videos(self, channel_id):
+        """Delete all videos for a channel"""
+        session = self.Session()
+        try:
+            session.query(Video).filter_by(channel_id=channel_id).delete()
+            session.commit()
+            return {"success": True, "message": "Channel videos deleted"}
+        except Exception as e:
+            session.rollback()
+            return {"success": False, "error": str(e)}
+        finally:
+            session.close()
+
     def get_all_videos(self):
         """Get all videos from database"""
         session = self.Session()
