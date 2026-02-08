@@ -14,6 +14,11 @@ class YouTubeVisualizer:
     
     def __init__(self):
         self.db = DatabaseManager()
+
+    def _fig_to_dict(self, fig):
+        if fig is None:
+            return None
+        return fig.to_dict()
     
     def create_channel_stats_card(self, channel_data):
         """Create metrics cards for channel statistics"""
@@ -50,6 +55,10 @@ class YouTubeVisualizer:
             showlegend=True
         )
         return fig
+
+    def plot_top_videos(self, channel_id):
+        """Compatibility wrapper for legacy API"""
+        return self._fig_to_dict(self.create_video_performance_chart(channel_id))
     
     def create_engagement_ratio_chart(self, channel_id):
         """Create chart for engagement metrics"""
@@ -90,6 +99,10 @@ class YouTubeVisualizer:
             hovermode='x unified'
         )
         return fig
+
+    def plot_engagement_metrics(self, channel_id):
+        """Compatibility wrapper for legacy API"""
+        return self._fig_to_dict(self.create_engagement_ratio_chart(channel_id))
     
     def create_views_distribution_chart(self, channel_id):
         """Create distribution chart for video views"""
@@ -211,6 +224,10 @@ class YouTubeVisualizer:
             hovermode='x unified'
         )
         return fig
+
+    def plot_publishing_timeline(self, channel_id):
+        """Compatibility wrapper for legacy API"""
+        return self._fig_to_dict(self.create_posting_frequency_chart(channel_id))
     
     def create_engagement_overview_chart(self, channel_id):
         """Create comprehensive engagement overview"""

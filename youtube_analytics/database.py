@@ -83,6 +83,7 @@ class Video(Base):
     thumbnail = Column(String(500))
     channel_title = Column(String(255))  # Added to track source channel
     fetched_at = Column(DateTime, default=datetime.utcnow)
+    last_searched_at = Column(DateTime)
     
     channel = relationship("Channel", back_populates="videos")
     
@@ -100,7 +101,7 @@ class Video(Base):
             "comments": self.comments,
             "thumbnail": self.thumbnail,
             "fetched_at": self.fetched_at,
-            "last_searched_at": self.last_searched_at
+            "last_searched_at": getattr(self, "last_searched_at", None)
         }
 
 
@@ -145,6 +146,12 @@ class DatabaseManager:
                         conn.exec_driver_sql("ALTER TABLE channels ADD COLUMN last_searched_at DATETIME")
                 except Exception:
                     pass
+                try:
+                    cols = [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(videos)").fetchall()]
+                    if "last_searched_at" not in cols:
+                        conn.exec_driver_sql("ALTER TABLE videos ADD COLUMN last_searched_at DATETIME")
+                except Exception:
+                    pass
             
             self.Session = sessionmaker(bind=self.engine)
             print("Database initialized successfully\n")
@@ -167,6 +174,7 @@ class DatabaseManager:
             # Convert datetime strings to Python datetime objects
             if 'published_at' in filtered_data and filtered_data['published_at']:
                 filtered_data['published_at'] = parse_datetime(filtered_data['published_at'])
+            filtered_data['last_searched_at'] = datetime.utcnow()
             filtered_data['last_searched_at'] = datetime.utcnow()
             
             channel = session.query(Channel).filter_by(channel_id=channel_data["channel_id"]).first()
