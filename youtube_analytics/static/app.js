@@ -41,6 +41,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadSavedVideos();
     await checkAPIHealth();
     await loadDashboard();
+    // Always preload saved channels list for the channels page
+    await loadSavedChannels();
 });
 
 function initializeEventListeners() {
@@ -99,142 +101,46 @@ function initializeEventListeners() {
         });
     }
 
-    // Saved Video Selection
-    const loadSavedVideoBtn = document.getElementById('load-saved-video-btn');
-    if (loadSavedVideoBtn) {
-        loadSavedVideoBtn.addEventListener('click', loadSelectedSavedVideo);
-    }
-
-    // Back button
     document.getElementById('back-btn').addEventListener('click', () => {
         showSection('channels');
-        document.getElementById('channel-details').style.display = 'none';
-        document.getElementById('channels').style.display = 'block';
     });
 
-    // Other buttons
     document.getElementById('fetch-videos-btn').addEventListener('click', handleFetchVideos);
     document.getElementById('clear-cache-btn').addEventListener('click', clearCache);
     document.getElementById('export-data-btn').addEventListener('click', exportData);
-    const deleteChannelBtn = document.getElementById('delete-channel-btn');
-    if (deleteChannelBtn) {
-        deleteChannelBtn.addEventListener('click', handleDeleteChannel);
-    }
-    const deleteVideoBtn = document.getElementById('delete-video-btn');
-    if (deleteVideoBtn) {
-        deleteVideoBtn.addEventListener('click', handleDeleteVideo);
-    }
-
-    const deleteChannelSelect = document.getElementById('delete-channel-select');
-    if (deleteChannelSelect) {
-        deleteChannelSelect.addEventListener('change', (e) => {
-            const input = document.getElementById('delete-channel-id');
-            if (input) input.value = e.target.value || '';
-        });
-    }
-    const deleteVideoSelect = document.getElementById('delete-video-select');
-    if (deleteVideoSelect) {
-        deleteVideoSelect.addEventListener('change', (e) => {
-            const input = document.getElementById('delete-video-id');
-            if (input) input.value = e.target.value || '';
-        });
-    }
 }
 
 // ==================== NAVIGATION ====================
 
 function handleNavigation(e) {
-    const section = e.target.getAttribute('data-section');
+    const btn = e.currentTarget;
+    const section = btn.getAttribute('data-section');
+    if (!section) return;
     showSection(section);
-    
-    // Update active button
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-        btn.classList.remove('active');
-    });
-    e.target.classList.add('active');
+
+    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
 }
 
 function showSection(sectionId) {
-    // Hide all sections
-    document.querySelectorAll('.section').forEach(section => {
-        section.classList.remove('active');
-    });
-    
-    // Show selected section
+    document.querySelectorAll('.section').forEach(s => s.classList.add('hidden'));
+
     const section = document.getElementById(sectionId);
     if (section) {
-        section.classList.add('active');
-        
-        // Load section-specific data
+        section.classList.remove('hidden');
+
         if (sectionId === 'dashboard') loadDashboard();
-        if (sectionId === 'channels') {
-            // Load saved channels by default
-            switchChannelsView('search');
-        }
+        if (sectionId === 'channels') loadSavedChannels();
         if (sectionId === 'settings') {
             checkAPIHealth();
             loadSettingsData();
         }
         if (sectionId === 'videos') {
-            // Clear video results when switching to videos section
-            document.getElementById('video-results').style.display = 'none';
-            document.getElementById('video-search-input').value = '';
+            const results = document.getElementById('video-results');
+            const input = document.getElementById('video-search-input');
+            if (results) results.classList.add('hidden');
+            if (input) input.value = '';
         }
-    }
-
-    // Ensure channel details view does not overlay other tabs
-    if (sectionId !== 'channel-details') {
-        const details = document.getElementById('channel-details');
-        if (details) details.style.display = 'none';
-        const list = document.getElementById('channels-list');
-        if (list) list.style.display = 'grid';
-    }
-}
-
-// ==================== CHANNELS VIEW TOGGLE ====================
-
-function switchChannelsView(view) {
-    const searchView = document.getElementById('search-view');
-    const savedView = document.getElementById('saved-view');
-    
-    if (view === 'search') {
-        searchView.classList.add('active-view');
-        savedView.classList.remove('active-view');
-        
-        // Hide saved channels view container
-        searchView.style.display = 'block';
-        savedView.style.display = 'none';
-    } else if (view === 'saved') {
-        searchView.classList.remove('active-view');
-        savedView.classList.add('active-view');
-        
-        // Hide search view container
-        searchView.style.display = 'none';
-        savedView.style.display = 'block';
-        
-        // Load saved channels
-        loadSavedChannels();
-    }
-}
-
-// ==================== VIDEOS VIEW TOGGLE ====================
-
-function switchVideosView(view) {
-    const searchView = document.getElementById('video-search-view');
-    const savedView = document.getElementById('video-saved-view');
-    
-    if (view === 'search') {
-        searchView.classList.add('active-view');
-        savedView.classList.remove('active-view');
-        
-        searchView.style.display = 'block';
-        savedView.style.display = 'none';
-    } else if (view === 'saved') {
-        searchView.classList.remove('active-view');
-        savedView.classList.add('active-view');
-        
-        searchView.style.display = 'none';
-        savedView.style.display = 'block';
     }
 }
 
@@ -254,8 +160,10 @@ async function loadDashboard() {
         });
 
         document.getElementById('total-channels').textContent = totalChannels;
-        document.getElementById('total-videos').textContent = totalVideos;
-        
+        document.getElementById('total-videos').textContent = formatNumber(totalVideos);
+
+        updateNavBadges(totalChannels, totalVideos);
+
         // Load recent channels
         loadRecentChannels(channels.channels.slice(0, 5));
         
@@ -281,10 +189,9 @@ function loadRecentChannels(channels) {
 
     container.innerHTML = channels.map(ch => `
         <div class="channel-card-scroll" onclick="selectChannel('${ch.channel_id}')">
-            <img src="${ch.profile_image || 'placeholder.jpg'}" alt="${ch.title}">
-            <h4>${ch.title}</h4>
-            <p>${formatNumber(parseInt(ch.subscribers))} subscribers</p>
-            <p style="font-size: 0.8rem; color: #7f8c8d;">${ch.total_videos} videos</p>
+            <img src="${ch.profile_image || ''}" alt="${(ch.title || '').replace(/"/g, '&quot;')}">
+            <h4>${ch.title || 'Channel'}</h4>
+            <p>${formatNumber(ch.subscribers)} subs · ${formatNumber(ch.total_videos)} videos</p>
         </div>
     `).join('');
 }
@@ -524,7 +431,7 @@ async function handleChannelSearch() {
         });
 
         document.getElementById('channel-result').innerHTML = formatChannelResult(response);
-        document.getElementById('search-results').style.display = 'block';
+        document.getElementById('search-results').classList.remove('hidden');
 
         // Auto-save to database
         currentChannelId = response.channel_id;
@@ -542,28 +449,19 @@ async function handleChannelSearch() {
 
 function formatChannelResult(channel) {
     return `
-        <div style="display: grid; grid-template-columns: 150px 1fr; gap: 1.5rem; align-items: start;">
-            <img src="${channel.profile_image}" alt="" style="width: 150px; height: 150px; border-radius: 12px;">
-            <div>
-                <h3>${channel.title}</h3>
-                <p style="color: #7f8c8d; margin-bottom: 1rem;">${channel.description}</p>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
-                    <div>
-                        <p style="font-size: 0.9rem; color: #7f8c8d;">Subscribers</p>
-                        <p style="font-size: 1.5rem; font-weight: 600; color: #0066cc;">${channel.subscribers}</p>
+        <div class="panel">
+            <div class="panel-body flex flex-col sm:flex-row gap-5">
+                <img src="${channel.profile_image || ''}" alt="" class="w-24 h-24 rounded-lg object-cover bg-slate-100 shrink-0">
+                <div class="flex-1 min-w-0">
+                    <h3 class="text-lg font-semibold text-slate-900">${channel.title || ''}</h3>
+                    <p class="text-sm text-slate-500 mt-1 line-clamp-2">${channel.description || ''}</p>
+                    <div class="grid grid-cols-3 gap-4 mt-3">
+                        <div><p class="kpi-label">Subscribers</p><p class="text-base font-semibold text-slate-900 tabular-nums">${formatNumber(channel.subscribers)}</p></div>
+                        <div><p class="kpi-label">Views</p><p class="text-base font-semibold text-slate-900 tabular-nums">${formatNumber(channel.total_views)}</p></div>
+                        <div><p class="kpi-label">Videos</p><p class="text-base font-semibold text-slate-900 tabular-nums">${formatNumber(channel.total_videos)}</p></div>
                     </div>
-                    <div>
-                        <p style="font-size: 0.9rem; color: #7f8c8d;">Total Views</p>
-                        <p style="font-size: 1.5rem; font-weight: 600; color: #0066cc;">${channel.total_views}</p>
-                    </div>
-                    <div>
-                        <p style="font-size: 0.9rem; color: #7f8c8d;">Videos</p>
-                        <p style="font-size: 1.5rem; font-weight: 600; color: #0066cc;">${channel.total_videos}</p>
-                    </div>
+                    <button class="btn btn-primary mt-4" onclick="selectChannel('${channel.channel_id}')">View analytics</button>
                 </div>
-                <button class="btn btn-primary" onclick="selectChannel('${channel.channel_id}')">
-                    View Analytics
-                </button>
             </div>
         </div>
     `;
@@ -574,39 +472,77 @@ function formatChannelResult(channel) {
 async function loadSavedChannels() {
     try {
         const response = await fetchAPI('/channels');
-        const channels = response.channels || [];
-        allChannels = channels;
-
-        const container = document.getElementById('channels-list');
-        
-        if (channels.length === 0) {
-            container.innerHTML = '<p class="placeholder">No channels saved yet. Use the search to add channels.</p>';
-            return;
-        }
-
-        container.innerHTML = channels.map(ch => `
-            <div class="channel-card" onclick="selectChannel('${ch.channel_id}')">
-                <img src="${ch.profile_image}" alt="" class="channel-card-image">
-                <div class="channel-card-body">
-                    <h4 class="channel-card-title">${ch.title}</h4>
-                    <p class="channel-card-meta">${ch.custom_url || 'No custom URL'}</p>
-                    <div class="channel-card-stats">
-                        <div class="channel-stat-item">
-                            <p class="channel-stat-label">Subscribers</p>
-                            <p class="channel-stat-value">${ch.subscribers}</p>
-                        </div>
-                        <div class="channel-stat-item">
-                            <p class="channel-stat-label">Videos</p>
-                            <p class="channel-stat-value">${ch.total_videos}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `).join('');
+        allChannels = response.channels || [];
+        renderSavedChannels();
     } catch (error) {
         showToast('Error loading channels', 'error');
     }
 }
+
+function renderSavedChannels() {
+    const container = document.getElementById('channels-list');
+    const countEl = document.getElementById('channels-count');
+    if (!container) return;
+
+    const filterEl = document.getElementById('channels-filter');
+    const sortEl = document.getElementById('channels-sort');
+    const q = (filterEl?.value || '').trim().toLowerCase();
+    const sort = sortEl?.value || 'recent';
+
+    let rows = allChannels.filter(ch =>
+        !q ||
+        (ch.title || '').toLowerCase().includes(q) ||
+        (ch.custom_url || '').toLowerCase().includes(q) ||
+        (ch.channel_id || '').toLowerCase().includes(q)
+    );
+
+    rows = [...rows].sort((a, b) => {
+        switch (sort) {
+            case 'subscribers': return toNumber(b.subscribers) - toNumber(a.subscribers);
+            case 'views':       return toNumber(b.total_views) - toNumber(a.total_views);
+            case 'title':       return (a.title || '').localeCompare(b.title || '');
+            case 'recent':
+            default:
+                return new Date(b.last_searched_at || b.fetched_at || 0) - new Date(a.last_searched_at || a.fetched_at || 0);
+        }
+    });
+
+    if (countEl) countEl.textContent = rows.length;
+
+    if (rows.length === 0) {
+        container.innerHTML = `<p class="placeholder col-span-full">${q ? 'No channels match your filter.' : 'No channels saved yet. Use the search above to add one.'}</p>`;
+        return;
+    }
+
+    container.innerHTML = rows.map(ch => `
+        <div class="channel-card" onclick="selectChannel('${ch.channel_id}')">
+            <img src="${ch.profile_image || ''}" alt="" class="channel-card-image">
+            <div class="channel-card-body">
+                <h4 class="channel-card-title">${ch.title || 'Channel'}</h4>
+                <p class="channel-card-meta">${ch.custom_url || ch.channel_id}</p>
+                <div class="channel-card-stats">
+                    <div class="channel-stat-item">
+                        <p class="channel-stat-label">Subscribers</p>
+                        <p class="channel-stat-value">${formatNumber(ch.subscribers)}</p>
+                    </div>
+                    <div class="channel-stat-item">
+                        <p class="channel-stat-label">Videos</p>
+                        <p class="channel-stat-value">${formatNumber(ch.total_videos)}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+window.renderSavedChannels = renderSavedChannels;
+window.renderSettingsChannels = renderSettingsChannels;
+window.renderSettingsVideos = renderSettingsVideos;
+window.deleteChannelById = deleteChannelById;
+window.deleteVideoById = deleteVideoById;
+window.settingsPageChange = (table, delta) => settingsPageChange(table, delta);
+window.resetSettingsChannelsPage = () => { _channelsPage = 1; };
+window.resetSettingsVideosPage = () => { _videosPage = 1; };
 
 async function selectChannel(channelId) {
     currentChannelId = channelId;
@@ -643,9 +579,8 @@ async function selectChannel(channelId) {
         await loadChannelVideos(channelId);
         
         // Show channel details view
-        document.getElementById('channels-list').style.display = 'none';
-        document.getElementById('search-results').style.display = 'none';
-        document.getElementById('channel-details').style.display = 'block';
+        document.querySelectorAll('.section').forEach(s => s.classList.add('hidden'));
+        document.getElementById('channel-details').classList.remove('hidden');
         
     } catch (error) {
         showToast(`Error loading channel: ${error.message}`, 'error');
@@ -681,20 +616,23 @@ async function loadChannelVideos(channelId, options = {}) {
             }
         }
 
-        scroller.innerHTML = videos.map(video => `
-            <div class="channel-card-scroll" style="flex: 0 0 300px;">
-                <img src="${video.thumbnail || 'placeholder.jpg'}" alt="${video.title || 'Video'}" style="width: 100%; height: 150px; object-fit: cover; border-radius: 8px;">
-                <div style="padding: 12px;">
-                    <h4 style="margin: 0 0 8px 0; font-size: 14px; font-weight: 600; color: var(--text-primary); line-height: 1.4;">${video.title}</h4>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; color: var(--text-secondary);">
-                        <div><strong style="color: var(--primary-blue);">${formatNumber(video.views)}</strong> views</div>
-                        <div><strong style="color: var(--accent-green);">${formatNumber(video.likes)}</strong> likes</div>
-                        <div><strong style="color: var(--accent-orange);">${formatNumber(video.comments)}</strong> comments</div>
-                        <div>${formatDate(video.published_at)}</div>
+        scroller.innerHTML = videos.map(video => {
+            const safeTitle = (video.title || 'Video').replace(/"/g, '&quot;');
+            const ytUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(video.video_id || '')}`;
+            return `
+            <a href="${ytUrl}" target="_blank" rel="noopener" class="channel-card-scroll no-underline">
+                <img src="${video.thumbnail || ''}" alt="${safeTitle}">
+                <div class="px-3 py-2 flex flex-col gap-1.5">
+                    <h4 class="!p-0">${video.title || 'Video'}</h4>
+                    <div class="grid grid-cols-2 gap-1 text-[11px] text-slate-500 tabular-nums">
+                        <span><strong class="text-slate-900">${formatNumber(video.views)}</strong> views</span>
+                        <span><strong class="text-slate-900">${formatNumber(video.likes)}</strong> likes</span>
+                        <span><strong class="text-slate-900">${formatNumber(video.comments)}</strong> comments</span>
+                        <span>${formatDate(video.published_at)}</span>
                     </div>
                 </div>
-            </div>
-        `).join('');
+            </a>`;
+        }).join('');
 
         // Draw charts with video data
         setTimeout(() => {
@@ -757,16 +695,42 @@ async function handleFetchVideos() {
 // ==================== SETTINGS ====================
 
 async function checkAPIHealth() {
+    const setStatus = (ok) => {
+        const badge = document.getElementById('api-status');
+        if (badge) {
+            badge.textContent = ok ? 'Connected' : 'Disconnected';
+            badge.className = 'status-badge ' + (ok ? 'success' : 'error');
+        }
+        const dot = document.getElementById('api-status-dot');
+        const ping = document.getElementById('api-status-dot-ping');
+        const text = document.getElementById('api-status-text');
+        if (dot) dot.style.backgroundColor = ok ? '#22c55e' : '#dc2626';
+        if (ping) {
+            if (ok) {
+                ping.classList.add('live');
+            } else {
+                ping.classList.remove('live');
+                ping.style.backgroundColor = '#dc2626';
+            }
+        }
+        if (text) {
+            text.textContent = ok ? 'Online' : 'Offline';
+            text.style.color = ok ? '#15803d' : '#b91c1c';
+        }
+    };
     try {
-        const response = await fetchAPI('/health');
-        const badge = document.getElementById('api-status');
-        badge.innerHTML = 'Connected';
-        badge.classList.add('success');
+        await fetchAPI('/health');
+        setStatus(true);
     } catch (error) {
-        const badge = document.getElementById('api-status');
-        badge.innerHTML = 'Disconnected';
-        badge.classList.add('error');
+        setStatus(false);
     }
+}
+
+function updateNavBadges(channelsCount, videosCount) {
+    const ch = document.getElementById('nav-channels-count');
+    const vd = document.getElementById('nav-videos-count');
+    if (ch) ch.textContent = formatNumber(channelsCount);
+    if (vd) vd.textContent = formatNumber(videosCount);
 }
 
 async function clearCache() {
@@ -794,81 +758,193 @@ async function exportData() {
     }
 }
 
-async function handleDeleteChannel() {
-    const input = document.getElementById('delete-channel-id');
-    const channelId = input ? input.value.trim() : '';
-    if (!channelId) {
-        showToast('Please enter a channel ID', 'error');
+let _settingsChannels = [];
+let _settingsVideos = [];
+const PAGE_SIZE = 25;
+let _channelsPage = 1;
+let _videosPage = 1;
+
+async function loadSettingsData() {
+    _channelsPage = 1;
+    _videosPage = 1;
+    await Promise.all([loadSettingsChannels(), loadSettingsVideos()]);
+}
+
+async function loadSettingsChannels() {
+    const container = document.getElementById('settings-channels-table');
+    if (!container) return;
+    try {
+        const response = await fetchAPI('/channels');
+        _settingsChannels = response.channels || [];
+        renderSettingsChannels();
+    } catch (e) {
+        container.innerHTML = '<p class="placeholder">Failed to load channels</p>';
+    }
+}
+
+function paginationBar(table, total, page, totalPages) {
+    const start = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+    const end = Math.min(page * PAGE_SIZE, total);
+    return `
+        <div class="flex items-center justify-between px-4 py-2 border-t border-slate-200 bg-slate-50 text-xs text-slate-600">
+            <span>${total === 0 ? '0 results' : `${start}–${end} of ${total}`}</span>
+            <div class="flex items-center gap-1">
+                <button class="btn btn-ghost text-xs" data-action="page-prev" data-table="${table}" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                <span class="px-2 tabular-nums">Page ${page} / ${Math.max(totalPages, 1)}</span>
+                <button class="btn btn-ghost text-xs" data-action="page-next" data-table="${table}" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+            </div>
+        </div>
+    `;
+}
+
+function renderSettingsChannels() {
+    const container = document.getElementById('settings-channels-table');
+    if (!container) return;
+    const filterEl = document.getElementById('settings-channels-filter');
+    const q = (filterEl?.value || '').trim().toLowerCase();
+    const filtered = _settingsChannels.filter(ch =>
+        !q || (ch.title || '').toLowerCase().includes(q) || (ch.channel_id || '').toLowerCase().includes(q)
+    );
+
+    const total = filtered.length;
+    const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+    if (_channelsPage > totalPages) _channelsPage = totalPages;
+    if (_channelsPage < 1) _channelsPage = 1;
+
+    if (total === 0) {
+        container.innerHTML = '<p class="placeholder">No channels match.</p>';
         return;
     }
-    if (!confirm('Delete this channel and all its videos from the database?')) return;
+
+    const start = (_channelsPage - 1) * PAGE_SIZE;
+    const rows = filtered.slice(start, start + PAGE_SIZE);
+
+    container.innerHTML = `
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Channel</th>
+                    <th>ID</th>
+                    <th class="num">Subscribers</th>
+                    <th class="num">Videos</th>
+                    <th class="actions"></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows.map(ch => `
+                    <tr>
+                        <td>${ch.title || ''}</td>
+                        <td><code class="text-xs text-slate-500">${ch.channel_id}</code></td>
+                        <td class="num">${formatNumber(ch.subscribers)}</td>
+                        <td class="num">${formatNumber(ch.total_videos)}</td>
+                        <td class="actions">
+                            <button class="btn btn-ghost text-xs" data-action="view-channel" data-id="${ch.channel_id}">View</button>
+                            <button class="btn btn-danger text-xs" data-action="delete-channel" data-id="${ch.channel_id}">Delete</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+        ${paginationBar('channels', total, _channelsPage, totalPages)}
+    `;
+}
+
+async function loadSettingsVideos() {
+    const container = document.getElementById('settings-videos-table');
+    if (!container) return;
+    try {
+        const response = await fetchAPI('/videos');
+        _settingsVideos = response.videos || [];
+        renderSettingsVideos();
+    } catch (e) {
+        container.innerHTML = '<p class="placeholder">Failed to load videos</p>';
+    }
+}
+
+function renderSettingsVideos() {
+    const container = document.getElementById('settings-videos-table');
+    if (!container) return;
+    const filterEl = document.getElementById('settings-videos-filter');
+    const q = (filterEl?.value || '').trim().toLowerCase();
+    const filtered = _settingsVideos.filter(v =>
+        !q || (v.title || '').toLowerCase().includes(q) || (v.video_id || '').toLowerCase().includes(q)
+    );
+
+    const total = filtered.length;
+    const totalPages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
+    if (_videosPage > totalPages) _videosPage = totalPages;
+    if (_videosPage < 1) _videosPage = 1;
+
+    if (total === 0) {
+        container.innerHTML = '<p class="placeholder">No videos match.</p>';
+        return;
+    }
+
+    const start = (_videosPage - 1) * PAGE_SIZE;
+    const rows = filtered.slice(start, start + PAGE_SIZE);
+
+    container.innerHTML = `
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Video ID</th>
+                    <th class="num">Views</th>
+                    <th class="num">Likes</th>
+                    <th class="actions"></th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows.map(v => `
+                    <tr>
+                        <td class="max-w-md truncate">${v.title || ''}</td>
+                        <td><code class="text-xs text-slate-500">${v.video_id}</code></td>
+                        <td class="num">${formatNumber(v.views)}</td>
+                        <td class="num">${formatNumber(v.likes)}</td>
+                        <td class="actions">
+                            <button class="btn btn-danger text-xs" data-action="delete-video" data-id="${v.video_id}">Delete</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+        ${paginationBar('videos', total, _videosPage, totalPages)}
+    `;
+}
+
+function settingsPageChange(table, delta) {
+    if (table === 'channels') {
+        _channelsPage += delta;
+        renderSettingsChannels();
+    } else if (table === 'videos') {
+        _videosPage += delta;
+        renderSettingsVideos();
+    }
+}
+
+async function deleteChannelById(channelId) {
+    if (!channelId) return;
+    if (!confirm('Delete this channel and all its videos?')) return;
     try {
         await fetchAPI(`/channel/${channelId}`, { method: 'DELETE' });
         showToast('Channel deleted', 'success');
-        if (input) input.value = '';
         await loadSettingsData();
         await loadDashboard();
+        await loadSavedChannels();
     } catch (error) {
-        showToast(`Error deleting channel: ${error.message}`, 'error');
+        showToast(`Error: ${error.message}`, 'error');
     }
 }
 
-async function handleDeleteVideo() {
-    const input = document.getElementById('delete-video-id');
-    const videoId = input ? input.value.trim() : '';
-    if (!videoId) {
-        showToast('Please enter a video ID', 'error');
-        return;
-    }
-    if (!confirm('Delete this video from the database?')) return;
+async function deleteVideoById(videoId) {
+    if (!videoId) return;
+    if (!confirm('Delete this video?')) return;
     try {
         await fetchAPI(`/video/${videoId}`, { method: 'DELETE' });
         showToast('Video deleted', 'success');
-        if (input) input.value = '';
         await loadSettingsData();
     } catch (error) {
-        showToast(`Error deleting video: ${error.message}`, 'error');
-    }
-}
-
-async function loadSettingsData() {
-    await Promise.all([populateDeleteChannels(), populateDeleteVideos()]);
-}
-
-async function populateDeleteChannels() {
-    const select = document.getElementById('delete-channel-select');
-    if (!select) return;
-    try {
-        const response = await fetchAPI('/channels');
-        const channels = response.channels || [];
-        select.innerHTML = '<option value=\"\">Choose a channel</option>';
-        channels.forEach(ch => {
-            const option = document.createElement('option');
-            option.value = ch.channel_id;
-            option.textContent = `${ch.title || 'Channel'} (${ch.channel_id})`;
-            select.appendChild(option);
-        });
-    } catch (error) {
-        // leave empty
-    }
-}
-
-async function populateDeleteVideos() {
-    const select = document.getElementById('delete-video-select');
-    if (!select) return;
-    try {
-        const response = await fetchAPI('/videos');
-        const videos = response.videos || [];
-        select.innerHTML = '<option value=\"\">Choose a video</option>';
-        videos.slice(0, 200).forEach(v => {
-            const option = document.createElement('option');
-            option.value = v.video_id;
-            const title = (v.title || 'Video').substring(0, 50);
-            option.textContent = `${title} (${v.video_id})`;
-            select.appendChild(option);
-        });
-    } catch (error) {
-        // leave empty
+        showToast(`Error: ${error.message}`, 'error');
     }
 }
 
@@ -898,32 +974,33 @@ async function fetchAPI(endpoint, options = {}) {
 
 // ==================== UI UTILITIES ====================
 
-function showLoading(show = true, text = 'Processing...') {
+function showLoading(show = true, _text = '') {
     const loading = document.getElementById('loading');
-    document.getElementById('loading-text').textContent = text;
-    loading.style.display = show ? 'flex' : 'none';
+    if (!loading) return;
+    if (show) loading.classList.remove('hidden');
+    else loading.classList.add('hidden');
 }
 
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
+    if (!container) return;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    
+
     const icons = {
-        success: '[SUCCESS]',
-        error: '[ERROR]',
-        info: '[INFO]'
+        success: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+        error:   '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+        info:    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
     };
 
     toast.innerHTML = `
-        <div class="toast-icon">${icons[type]}</div>
+        <div class="toast-icon">${icons[type] || icons.info}</div>
         <div class="toast-message">${message}</div>
-        <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+        <button class="toast-close" aria-label="Dismiss">×</button>
     `;
+    toast.querySelector('.toast-close').addEventListener('click', () => toast.remove());
 
     container.appendChild(toast);
-
-    // Auto-remove after 5 seconds
     setTimeout(() => toast.remove(), 5000);
 }
 
@@ -948,7 +1025,7 @@ async function handleVideoSearch() {
             }
             displayVideoAnalytics(cachedVideo);
             addToSavedVideos(cachedVideo);
-            document.getElementById('video-results').style.display = 'block';
+            document.getElementById('video-results').classList.remove('hidden');
             showToast('Loaded from local cache', 'success');
             return;
         }
@@ -962,7 +1039,7 @@ async function handleVideoSearch() {
             }
             displayVideoAnalytics(localVideo);
             addToSavedVideos(localVideo);
-            document.getElementById('video-results').style.display = 'block';
+            document.getElementById('video-results').classList.remove('hidden');
             showToast('Loaded from local database', 'success');
             return;
         }
@@ -978,15 +1055,15 @@ async function handleVideoSearch() {
             }
             displayVideoAnalytics(video);
             addToSavedVideos(video);
-            document.getElementById('video-results').style.display = 'block';
+            document.getElementById('video-results').classList.remove('hidden');
             showToast('Video analysis loaded and saved', 'success');
         } else {
             showToast('Video not found', 'error');
-            document.getElementById('video-results').style.display = 'none';
+            document.getElementById('video-results').classList.add('hidden');
         }
     } catch (error) {
         showToast(`Error searching video: ${error.message}`, 'error');
-        document.getElementById('video-results').style.display = 'none';
+        document.getElementById('video-results').classList.add('hidden');
     } finally {
         showLoading(false);
     }
@@ -1031,7 +1108,7 @@ async function loadVideoFromDbOnly(videoId) {
             }
             displayVideoAnalytics(cachedVideo);
             addToSavedVideos(cachedVideo);
-            document.getElementById('video-results').style.display = 'block';
+            document.getElementById('video-results').classList.remove('hidden');
             showToast('Loaded from local cache', 'success');
             return;
         }
@@ -1045,7 +1122,7 @@ async function loadVideoFromDbOnly(videoId) {
             }
             displayVideoAnalytics(localVideo);
             addToSavedVideos(localVideo);
-            document.getElementById('video-results').style.display = 'block';
+            document.getElementById('video-results').classList.remove('hidden');
             showToast('Loaded from local database', 'success');
             return;
         }
@@ -1062,10 +1139,10 @@ function displayVideoAnalytics(video) {
     currentVideoAnalytics = video;
     currentVideoAnalytics = video;
     // Show video statistics and chart sections
-    document.getElementById('video-stats-section').style.display = 'block';
-    document.getElementById('video-advanced-charts-section').style.display = 'grid';
-    document.getElementById('video-insights-charts-section').style.display = 'grid';
-    document.getElementById('video-trend-charts-section').style.display = 'grid';
+    document.getElementById('video-stats-section').classList.remove('hidden');
+    document.getElementById('video-advanced-charts-section').classList.remove('hidden');
+    document.getElementById('video-insights-charts-section').classList.remove('hidden');
+    document.getElementById('video-trend-charts-section').classList.remove('hidden');
     
     const views = toNumber(video.views);
     const likes = toNumber(video.likes);
@@ -1174,20 +1251,6 @@ function getSavedBenchmarks() {
     };
 }
 
-function loadSelectedSavedVideo() {
-    if (savedVideos.length === 0) {
-        showToast('No saved videos. Search for videos first in the search tab.', 'info');
-        return;
-    }
-    
-    // Load the first saved video or the most recent one
-    const video = savedVideos[savedVideos.length - 1];
-    displayVideoAnalytics(video);
-    
-    const resultsDiv = document.getElementById('saved-video-results');
-    resultsDiv.style.display = 'block';
-}
-
 function toNumber(value) {
     if (value === null || value === undefined) return 0;
     if (typeof value === 'number') return value;
@@ -1257,6 +1320,8 @@ window.toNumber = toNumber;
 window.formatNumber = formatNumber;
 window.formatDate = formatDate;
 window.getSavedBenchmarks = getSavedBenchmarks;
+window.showSection = showSection;
+window.selectChannel = selectChannel;
 
 // ==================== ERROR HANDLING ====================
 

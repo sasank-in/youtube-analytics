@@ -4,49 +4,70 @@ Professional and production-ready FastAPI backend for YouTube analytics.
 Provides RESTful API endpoints for YouTube data management.
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from youtube_analytics.fetcher import YouTubeFetcher
 from youtube_analytics.database import DatabaseManager
-from youtube_analytics.config import TOP_VIDEOS_LIMIT
+from youtube_analytics.config import TOP_VIDEOS_LIMIT, LOG_LEVEL
 from youtube_analytics.visualizer import YouTubeVisualizer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
-import json
 
-# Initialize FastAPI app
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("youtube_analytics.api")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    logger.info("YouTube Analytics API starting up")
+    yield
+    logger.info("YouTube Analytics API shutting down")
+
+
 app = FastAPI(
     title="YouTube Analytics Pro",
     description="Professional YouTube channel analytics and insights",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan,
 )
 
-# Add CORS middleware
+# CORS: default to localhost only; override with CORS_ORIGINS env (comma-separated).
+_default_origins = "http://localhost:8000,http://127.0.0.1:8000"
+_cors_origins = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", _default_origins).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+# Refetch threshold: skip wiping/refetching if a channel was searched within this window.
+CHANNEL_REFRESH_SECONDS = int(os.getenv("CHANNEL_REFRESH_SECONDS", "86400"))
 
 # Initialize services
 fetcher = YouTubeFetcher()
 db = DatabaseManager()
 visualizer = YouTubeVisualizer()
 
-# Current directory
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-TEMPLATES_DIR = BASE_DIR / "templates"
-
-# Create directories if they don't exist
-STATIC_DIR.mkdir(exist_ok=True)
-TEMPLATES_DIR.mkdir(exist_ok=True)
+# Frontend assets live inside the package so `pip install` can ship them.
+PACKAGE_DIR = Path(__file__).resolve().parent / "youtube_analytics"
+STATIC_DIR = PACKAGE_DIR / "static"
+TEMPLATES_DIR = PACKAGE_DIR / "templates"
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -62,6 +83,11 @@ class ChannelSearch(BaseModel):
 class VideoSearch(BaseModel):
     """Video search request model"""
     video_id: str
+
+
+class RPMUpdate(BaseModel):
+    """RPM update payload"""
+    rpm: float = Field(ge=0)
 
 
 class ChannelResponse(BaseModel):
@@ -104,32 +130,53 @@ async def health_check():
 
 @app.post("/api/channel/search")
 async def search_channel(search: ChannelSearch, background_tasks: BackgroundTasks):
-    """Search for a channel by ID or name"""
+    """Search for a channel by ID or name.
+
+    Idempotent: if the channel was fetched within CHANNEL_REFRESH_SECONDS,
+    return the cached row and skip the YouTube refetch.
+    """
     try:
         if search.search_type == "id":
             channel_data = fetcher.get_channel_by_id(search.query)
         else:
             channel_data = fetcher.get_channel_by_name(search.query)
-        
+
         if "error" in channel_data:
             raise HTTPException(status_code=404, detail=channel_data["error"])
-        
-        # If channel exists, wipe old data first
-        existing = db.get_channel(channel_data["channel_id"])
-        if existing:
-            db.delete_channel(channel_data["channel_id"])
 
-        # Save channel to database
+        existing = db.get_channel(channel_data["channel_id"])
+        if existing and _is_fresh(existing.get("fetched_at")):
+            logger.info("Channel %s is fresh; skipping refetch", channel_data["channel_id"])
+            return existing
+
+        # Upsert channel metadata (no destructive delete — videos are refreshed
+        # atomically inside fetch_channel_videos via delete_channel_videos
+        # only after a successful API call).
         db.add_channel(channel_data)
-        
-        # Fetch videos in background
+
         background_tasks.add_task(fetch_channel_videos, channel_data['channel_id'])
-        
+
         return channel_data
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("search_channel failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _is_fresh(fetched_at) -> bool:
+    """True if fetched_at is within the refresh window."""
+    if not fetched_at:
+        return False
+    if isinstance(fetched_at, str):
+        try:
+            fetched_at = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    now = datetime.now(timezone.utc)
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    return (now - fetched_at).total_seconds() < CHANNEL_REFRESH_SECONDS
 
 
 @app.get("/api/channels")
@@ -241,22 +288,24 @@ async def get_channel_videos(channel_id: str, limit: int = 50, include_charts: b
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _search_video_by_id(video_id: str) -> dict:
+    """Shared video lookup logic used by POST and GET search endpoints."""
+    video_data = fetcher.get_video_by_id(video_id)
+    if "error" in video_data:
+        raise HTTPException(status_code=404, detail=video_data["error"])
+    db.add_video(video_data)
+    return {"videos": [video_data]}
+
+
 @app.post("/api/video/search")
 async def search_video(video: VideoSearch):
     """Search for a video by ID"""
     try:
-        video_data = fetcher.get_video_by_id(video.video_id)
-        
-        if "error" in video_data:
-            raise HTTPException(status_code=404, detail=video_data["error"])
-        
-        # Save video to database if channel exists
-        db.add_video(video_data)
-        
-        return {"videos": [video_data]}
+        return _search_video_by_id(video.video_id)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("search_video failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -264,18 +313,11 @@ async def search_video(video: VideoSearch):
 async def search_video_get(q: str):
     """Search for a video by ID (GET method)"""
     try:
-        video_data = fetcher.get_video_by_id(q)
-        
-        if "error" in video_data:
-            raise HTTPException(status_code=404, detail=video_data["error"])
-        
-        # Save video to database if channel exists
-        db.add_video(video_data)
-        
-        return {"videos": [video_data]}
+        return _search_video_by_id(q)
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("search_video_get failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -321,19 +363,17 @@ async def get_channel_rpm(channel_id: str):
 
 
 @app.put("/api/channel/{channel_id}/rpm")
-async def set_channel_rpm(channel_id: str, payload: dict):
+async def set_channel_rpm(channel_id: str, payload: RPMUpdate):
     """Set RPM setting for a channel"""
     try:
-        rpm = float(payload.get("rpm", 0))
-        if rpm < 0:
-            raise HTTPException(status_code=400, detail="RPM must be >= 0")
-        result = db.set_channel_rpm(channel_id, rpm)
+        result = db.set_channel_rpm(channel_id, payload.rpm)
         if not result.get("success"):
             raise HTTPException(status_code=500, detail=result.get("error", "Unknown error"))
         return {"channel_id": channel_id, "rpm": result.get("rpm")}
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("set_channel_rpm failed")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -375,13 +415,13 @@ def fetch_channel_videos(channel_id: str, debug: bool = False):
         )
 
         if isinstance(fetch_result, dict) and fetch_result.get("error"):
-            print(f"Error fetching videos for channel {channel_id}: {fetch_result['error']}")
+            logger.error("Error fetching videos for channel %s: %s", channel_id, fetch_result["error"])
             return {"error": fetch_result["error"], "saved": 0, "debug": fetch_result.get("debug")}
 
         videos = fetch_result["videos"] if debug and isinstance(fetch_result, dict) else fetch_result
 
         if not videos:
-            print(f"No videos returned from API for channel: {channel_id}")
+            logger.warning("No videos returned from API for channel: %s", channel_id)
             return {"saved": 0, "debug": fetch_result.get("debug") if debug and isinstance(fetch_result, dict) else None}
 
         # Wipe existing videos for this channel before saving new top list
@@ -393,10 +433,10 @@ def fetch_channel_videos(channel_id: str, debug: bool = False):
                 result = db.add_video(video)
                 if result.get("success"):
                     saved += 1
-        print(f"Fetched {len(videos)} videos for channel {channel_id}, saved {saved}")
+        logger.info("Fetched %d videos for channel %s, saved %d", len(videos), channel_id, saved)
         return {"saved": saved, "debug": fetch_result.get("debug") if debug and isinstance(fetch_result, dict) else None}
     except Exception as e:
-        print(f"Error fetching videos: {e}")
+        logger.exception("Error fetching videos for channel %s", channel_id)
         return {"error": str(e), "saved": 0}
 
 
@@ -423,7 +463,7 @@ def generate_visualizations(channel_id: str, videos: List[dict]) -> dict:
         
         return charts
     except Exception as e:
-        print(f"Error generating visualizations: {e}")
+        logger.exception("Error generating visualizations for channel %s", channel_id)
         return {}
 
 
@@ -446,34 +486,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-# ==================== Startup/Shutdown ====================
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize on startup"""
-    print("YouTube Analytics API started")
-    print("Backend: FastAPI")
-    print("Database: SQLite")
-    print("Frontend: Vanilla JavaScript + Corporate Design")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    print("YouTube Analytics API shutdown")
-
-
 if __name__ == "__main__":
     import uvicorn
     import sys
-    
-    # Allow port configuration
+
     port = 8000
     if len(sys.argv) > 1:
         try:
             port = int(sys.argv[1])
         except ValueError:
             port = 8000
-    
-    print(f"Starting server on http://localhost:{port}")
-    uvicorn.run(app, host="127.0.0.1", port=port)
+
+    host = os.getenv("HOST", "127.0.0.1")
+    logger.info("Starting server on http://%s:%d", host, port)
+    uvicorn.run(app, host=host, port=port)
