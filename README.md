@@ -70,10 +70,9 @@ creatorscope/
 │   ├── config.py                     # env vars, DB URL, log level
 │   ├── database.py                   # SQLAlchemy models + DatabaseManager
 │   ├── fetcher.py                    # YouTube Data API client
-│   ├── visualizer.py                 # legacy server-side chart helpers
 │   ├── static/                       # frontend assets (shipped with package)
 │   │   ├── app.js, styles.css, favicon.ico
-│   │   └── js/{channel,video,ui-enhancements}.js
+│   │   └── js/{analytics-helpers,channel-charts,video-charts,ui-enhancements}.js
 │   └── templates/index.html
 │
 ├── data/                             # SQLite DB (gitignored)

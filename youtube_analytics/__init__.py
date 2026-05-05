@@ -1,14 +1,11 @@
-"""YouTube Analytics Platform - Core Package"""
-
-__version__ = "1.0.0"
-__author__ = "Your Name"
+"""Creatorscope — self-hosted YouTube analytics platform."""
 
 from youtube_analytics.database import DatabaseManager
 from youtube_analytics.fetcher import YouTubeFetcher
-from youtube_analytics.visualizer import YouTubeVisualizer
+
+__version__ = "2.0.0"
 
 __all__ = [
-    "YouTubeFetcher",
     "DatabaseManager",
-    "YouTubeVisualizer",
+    "YouTubeFetcher",
 ]
